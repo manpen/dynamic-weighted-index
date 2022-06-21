@@ -1,0 +1,9 @@
+[package]
+name = "dynamic-weighted-index"
+version = "0.1.0"
+edition = "2021"
+authors = ["Manuel Penschuck <dynamic-weighted-index@algorithm.engineering>"]
+
+[dependencies]
+rand = "0.8.5"
+ez-bitset = "0.1.0"
