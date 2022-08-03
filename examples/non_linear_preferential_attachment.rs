@@ -92,14 +92,14 @@ fn execute_preferential_attachment(opt: Opt, rng: &mut impl Rng) {
     }
 
     // run preferential attachment
-    let mut hosts = vec![opt.initial_degree];
+    let mut hosts = vec![0; opt.initial_degree];
 
     for u in opt.initial_nodes.unwrap()..total_nodes {
         // sample neighbors
         for h in &mut hosts {
             *h = dyn_index.sample(rng).unwrap();
             if opt.simple_graph && opt.initial_degree > 1 {
-                dyn_index.set_weight(*h, 0.0);
+                dyn_index.remove_weight(*h);
             };
         }
 
