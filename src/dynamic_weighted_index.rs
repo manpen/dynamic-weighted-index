@@ -1,35 +1,20 @@
-use ez_bitset::bitset::BitSet;
+use super::sorted_sequence::SortedSequence;
 use rand::prelude::{Distribution, SliceRandom};
 use rand::Rng;
-use std::collections::HashMap;
 
 pub struct DynamicWeightedIndex {
     indices: Vec<Option<RangeIndex>>,
     levels: Vec<Level>,
     total_weight: f64,
-    min_item_weight: f64,
-    #[allow(dead_code)]
-    max_total_weight: f64,
 }
 
 impl DynamicWeightedIndex {
     /// Constructs a [`DynamicWeightedIndex`] on `n` elements; initially all elements have weight 0.
     pub fn new(n: usize) -> Self {
-        Self::with_limits(n, f64::MIN_POSITIVE, f64::MAX)
-    }
-
-    /// Constructs a [`DynamicWeightedIndex`] on `n` elements; initially all elements have weight `0.0`.
-    /// Additionally `min_item_prob` gives a hint on the smallest positive weight that will be assigned
-    /// to any element (that is, any weight `w` assigned satisfies either `w == 0` or `w >= min_item_prob`).
-    /// The parameter `max_total_weight` is an upper bound on the sum of all weights assigned at any
-    /// given time. Both parameters are hints to the data structure to optimize performance.
-    pub fn with_limits(n: usize, min_item_weight: f64, max_total_weight: f64) -> Self {
         Self {
             indices: vec![None; n],
             levels: vec![Default::default(); 5],
             total_weight: 0.0,
-            min_item_weight,
-            max_total_weight,
         }
     }
 
@@ -39,21 +24,21 @@ impl DynamicWeightedIndex {
             return self.remove_weight(index);
         }
 
-        assert!(new_weight >= self.min_item_weight);
+        assert!(new_weight > 0.0);
         self.total_weight += new_weight;
 
         let new_range_id = self.compute_range_index(new_weight);
 
         // if element is already assigned, remove it from that range
         if let Some(prev_range_index) = self.indices[index] {
-            let old_weight = self.weight(index).unwrap();
+            let old_weight = self.weight(index);
             self.total_weight -= old_weight;
 
             // short-cut: element stays in the same range; just update its weight
             if prev_range_index.range_index == new_range_id {
                 let weight_increase = new_weight - old_weight;
 
-                let parent = self.get_range_mut_or_fail(0, new_range_id);
+                let parent = self.get_range_mut(0, new_range_id);
                 let (old_parent_weight, _) = parent.increase_weight(weight_increase);
                 parent.elements[prev_range_index.index_in_range].weight = new_weight;
 
@@ -75,10 +60,23 @@ impl DynamicWeightedIndex {
         );
     }
 
+    /// Functionally equivalent to `self.set_weight(idx, 0.0)`.
+    pub fn remove_weight(&mut self, index: usize) {
+        if let Some(range_index) = self.indices[index] {
+            self.total_weight -= self.weight(index);
+
+            self.indices[index] = None;
+            self.remove_element_from_range(0, range_index);
+        }
+    }
+
     /// Returns the weight of the `index`-th element (`None` if the element is uninitialized)
-    pub fn weight(&self, idx: usize) -> Option<f64> {
-        let idx = self.indices[idx]?;
-        Some(self.get_range_or_fail(0, idx.range_index).elements[idx.index_in_range].weight)
+    pub fn weight(&self, idx: usize) -> f64 {
+        if let Some(idx) = self.indices[idx] {
+            self.get_range(0, idx.range_index).elements[idx.index_in_range].weight
+        } else {
+            0.0
+        }
     }
 
     /// Returns the non-negative sum `S` of all weights assigned to this data structure. This value
@@ -99,7 +97,7 @@ impl DynamicWeightedIndex {
         while level_idx > 0 {
             let child = root.sample_child(rng).unwrap();
             level_idx -= 1;
-            root = self.levels[level_idx].ranges.get(&child.index).unwrap();
+            root = &self.levels[level_idx].ranges[child.index];
         }
 
         root.sample_child(rng)
@@ -109,6 +107,7 @@ impl DynamicWeightedIndex {
 // PRIVATE IMPLEMENTATION DETAILS //////////////////////////////////////////////////////////////////
 
 const FLOAT_EXP_BITS: usize = 11;
+const MAX_NUM_RANGES: usize = 1usize << FLOAT_EXP_BITS;
 
 #[derive(Default, Debug, Eq, PartialEq, Clone, Copy)]
 struct RangeIndex {
@@ -118,8 +117,8 @@ struct RangeIndex {
 
 #[derive(Debug, Clone)]
 struct Level {
-    ranges: HashMap<usize, Range>,
-    roots: BitSet,
+    ranges: Vec<Range>,
+    roots: SortedSequence<u32>,
     roots_weight: f64,
 }
 
@@ -128,8 +127,8 @@ impl Level {
         linear_sampling_from_iterator(
             rng,
             self.roots_weight,
-            self.roots.iter().map(|i| {
-                let range = self.ranges.get(&i).unwrap();
+            self.roots.iter_rev().map(|&i| {
+                let range = &self.ranges[i as usize];
                 (range, range.weight)
             }),
         )
@@ -139,8 +138,14 @@ impl Level {
 impl Default for Level {
     fn default() -> Self {
         Level {
-            ranges: Default::default(),
-            roots: BitSet::new(1usize << FLOAT_EXP_BITS),
+            ranges: (0..MAX_NUM_RANGES)
+                .into_iter()
+                .map(|range_index| Range {
+                    max_element_weight: max_weight_of_range_index(range_index as u32),
+                    ..Default::default()
+                })
+                .collect(),
+            roots: Default::default(),
             roots_weight: 0.0,
         }
     }
@@ -165,16 +170,9 @@ impl Range {
         if self.elements.len() == 1 {
             Some(self.elements[0])
         } else {
-            debug_assert!(self
-                .elements
-                .iter()
-                .all(|x| x.weight <= self.max_element_weight));
-
             loop {
                 let &element = self.elements.as_slice().choose(rng)?;
-                if element.weight == self.max_element_weight
-                    || rng.gen_range(0.0..self.max_element_weight) < element.weight
-                {
+                if rng.gen_bool(element.weight / self.max_element_weight) {
                     break Some(element);
                 }
             }
@@ -200,23 +198,13 @@ impl DynamicWeightedIndex {
         });
     }
 
-    fn remove_weight(&mut self, index: usize) {
-        if let Some(weight) = self.weight(index) {
-            self.total_weight -= weight;
-            let range_index = self.indices[index].unwrap();
-
-            self.indices[index] = None;
-            self.remove_element_from_range(0, range_index);
-        }
-    }
-
     fn push_element_to_range(
         &mut self,
         level_index: u32,
         range_index: u32,
         new_element: IndexAndWeight,
     ) -> usize {
-        let range = self.get_range_mut_or_insert(level_index, range_index);
+        let range = self.get_range_mut(level_index, range_index);
         let old_num_elements = range.elements.len();
 
         // handle weights
@@ -253,7 +241,7 @@ impl DynamicWeightedIndex {
     }
 
     fn remove_element_from_range(&mut self, level_index: u32, range_index: RangeIndex) {
-        let range = self.get_range_mut_or_fail(level_index, range_index.range_index);
+        let range = self.get_range_mut(level_index, range_index.range_index);
         let parent = range.parent;
         let old_num_elements = range.elements.len();
 
@@ -281,6 +269,8 @@ impl DynamicWeightedIndex {
             1 => {
                 // .. this was a root range that is now empty; remove it.
                 self.remove_root_range(level_index, range_index.range_index, old_weight);
+                self.get_range_mut(level_index, range_index.range_index)
+                    .weight = 0.0;
             }
             2 => {
                 // .. this range previously had a two element and therefore a parent.
@@ -321,13 +311,8 @@ impl DynamicWeightedIndex {
         );
     }
 
-    /// Updates the weight of a range in its parent's structure (the range's weight itself is not
-    /// affected). Preconditions:
-    ///  - The range must have had multiple children previously and has to keep them
-    ///    (i.e. it is not a root)
-    ///  - The weight record with the parent is unchanged and will be updated here
     fn update_range_weight(&mut self, level: u32, range_index: u32, old_weight: f64) {
-        let range = self.get_range_or_fail(level, range_index);
+        let range = self.get_range(level, range_index);
         let new_weight = range.weight;
 
         if range.elements.len() == 1 {
@@ -337,8 +322,13 @@ impl DynamicWeightedIndex {
 
             let new_parent_range_index = self.compute_range_index(new_weight);
 
-            if false {
-                // TODO: implement short-cut "parent.range_index == new_parent_range_index"
+            if parent.range_index == new_parent_range_index {
+                let parent_range = self.get_range_mut(level + 1, parent.range_index);
+
+                let (old_parent_weight, _) = parent_range.increase_weight(new_weight - old_weight);
+                parent_range.elements[parent.index_in_range].weight = new_weight;
+
+                self.update_range_weight(level + 1, parent.range_index, old_parent_weight);
             } else {
                 self.remove_element_from_range(level + 1, parent);
                 self.push_range_to_parent(level, range_index, new_parent_range_index, new_weight);
@@ -346,50 +336,30 @@ impl DynamicWeightedIndex {
         }
     }
 
-    fn get_range_or_fail(&self, level: u32, range: u32) -> &Range {
-        self.levels[level as usize]
-            .ranges
-            .get(&(range as usize))
-            .unwrap()
+    fn get_range(&self, level: u32, range: u32) -> &Range {
+        &self.levels[level as usize].ranges[range as usize]
     }
 
-    fn get_range_mut_or_fail(&mut self, level: u32, range: u32) -> &mut Range {
-        self.levels[level as usize]
-            .ranges
-            .get_mut(&(range as usize))
-            .unwrap()
-    }
-
-    fn get_range_mut_or_insert(&mut self, level: u32, range_index: u32) -> &mut Range {
-        self.levels[level as usize]
-            .ranges
-            .entry(range_index as usize)
-            .or_insert_with(|| Range {
-                max_element_weight: Self::max_weight_of_range_index(range_index),
-                ..Default::default()
-            })
+    fn get_range_mut(&mut self, level: u32, range: u32) -> &mut Range {
+        &mut self.levels[level as usize].ranges[range as usize]
     }
 
     fn set_range_parent(&mut self, level: u32, range_index: u32, parent: RangeIndex) {
-        self.get_range_mut_or_insert(level, range_index).parent = Some(parent);
+        self.get_range_mut(level, range_index).parent = Some(parent);
     }
 
     fn make_root_range(&mut self, level: u32, range_index: u32) {
-        let range = self.get_range_mut_or_insert(level, range_index);
+        let range = self.get_range_mut(level, range_index);
         range.parent = None;
         self.levels[level as usize].roots_weight += range.weight;
 
-        self.levels[level as usize]
-            .roots
-            .set_bit(range_index as usize);
+        self.levels[level as usize].roots.insert(range_index);
     }
 
     fn remove_root_range(&mut self, level: u32, range_index: u32, weight: f64) {
         self.levels[level as usize].roots_weight -= weight;
 
-        self.levels[level as usize]
-            .roots
-            .unset_bit(range_index as usize);
+        self.levels[level as usize].roots.remove(&range_index);
     }
 
     fn sample_level_index<R: Rng + ?Sized>(&self, rng: &mut R) -> Option<usize> {
@@ -407,12 +377,12 @@ impl DynamicWeightedIndex {
         assert!(result >= 0);
         result as u32
     }
+}
 
-    fn max_weight_of_range_index(index: u32) -> f64 {
-        const OFFSET: i32 = 1 << (FLOAT_EXP_BITS - 1);
-        let index = (index as i32) - OFFSET;
-        2.0_f64.powi(index + 1)
-    }
+fn max_weight_of_range_index(index: u32) -> f64 {
+    const OFFSET: i32 = 1 << (FLOAT_EXP_BITS - 1);
+    let index = (index as i32) - OFFSET;
+    2.0_f64.powi(index + 1)
 }
 
 impl Distribution<Option<usize>> for DynamicWeightedIndex {
@@ -452,29 +422,29 @@ mod test {
     #[test]
     fn set_weight() {
         let mut dyn_index = DynamicWeightedIndex::new(2);
-        assert!(dyn_index.weight(0).is_none());
-        assert!(dyn_index.weight(1).is_none());
+        assert_eq!(dyn_index.weight(0), 0.0);
+        assert_eq!(dyn_index.weight(1), 0.0);
 
         dyn_index.set_weight(0, DUMMY_WEIGHT_VALUE);
-        assert_f64_near!(dyn_index.weight(0).unwrap(), DUMMY_WEIGHT_VALUE);
-        assert!(dyn_index.weight(1).is_none());
+        assert_f64_near!(dyn_index.weight(0), DUMMY_WEIGHT_VALUE);
+        assert_eq!(dyn_index.weight(1), 0.0);
 
         dyn_index.set_weight(1, DUMMY_WEIGHT_VALUE1);
-        assert_f64_near!(dyn_index.weight(0).unwrap(), DUMMY_WEIGHT_VALUE);
-        assert_f64_near!(dyn_index.weight(1).unwrap(), DUMMY_WEIGHT_VALUE1);
+        assert_f64_near!(dyn_index.weight(0), DUMMY_WEIGHT_VALUE);
+        assert_f64_near!(dyn_index.weight(1), DUMMY_WEIGHT_VALUE1);
     }
 
     #[test]
     fn update_weight() {
         let mut dyn_index = DynamicWeightedIndex::new(2);
-        assert!(dyn_index.weight(0).is_none());
+        assert_eq!(dyn_index.weight(0), 0.0);
 
         dyn_index.set_weight(0, DUMMY_WEIGHT_VALUE);
-        assert_f64_near!(dyn_index.weight(0).unwrap(), DUMMY_WEIGHT_VALUE);
+        assert_f64_near!(dyn_index.weight(0), DUMMY_WEIGHT_VALUE);
         assert_f64_near!(dyn_index.total_weight(), DUMMY_WEIGHT_VALUE);
 
         dyn_index.set_weight(0, DUMMY_WEIGHT_VALUE1);
-        assert_f64_near!(dyn_index.weight(0).unwrap(), DUMMY_WEIGHT_VALUE1);
+        assert_f64_near!(dyn_index.weight(0), DUMMY_WEIGHT_VALUE1);
         assert_f64_near!(dyn_index.total_weight(), DUMMY_WEIGHT_VALUE1);
     }
 
@@ -512,16 +482,81 @@ mod test {
 
                 for (i, w) in weights.iter().enumerate() {
                     if let Some(pw) = w.clone() {
-                        let dyn_weight = dyn_index.weight(i).unwrap();
+                        let dyn_weight = dyn_index.weight(i);
                         assert_f64_near!(pw, dyn_weight);
                     } else {
-                        assert!(dyn_index.weight(i).is_none());
+                        assert_eq!(dyn_index.weight(i), 0.0);
                     }
                 }
 
                 let total_weight: f64 = weights.iter().map(|w| w.unwrap_or(0.0)).sum();
                 assert_f64_near!(dyn_index.total_weight(), total_weight, 1000);
             }
+        }
+    }
+
+    fn get_used_index(rng: &mut impl Rng, n: usize) -> DynamicWeightedIndex {
+        let mut dyn_index = DynamicWeightedIndex::new(n);
+        for _ in 0..10 * n {
+            let weight = 10.0_f64.powf(rng.gen_range(-10.0..10.0));
+            let index = rng.gen_range(0..n);
+            dyn_index.set_weight(index, weight);
+        }
+        dyn_index
+    }
+
+    #[test]
+    fn consistent_root_weights() {
+        let mut rng = pcg_rand::Pcg64::seed_from_u64(0x12345);
+
+        for n in 2..100 {
+            let dyn_index = get_used_index(&mut rng, n);
+
+            let root_weights: f64 = dyn_index.levels.iter().map(|l| l.roots_weight).sum();
+            assert_float_relative_eq!(dyn_index.total_weight, root_weights, 1e-6);
+        }
+    }
+
+    #[test]
+    fn consistent_range_weights() {
+        let mut rng = pcg_rand::Pcg64::seed_from_u64(0x12345);
+
+        for n in 2..100 {
+            let dyn_index = get_used_index(&mut rng, n);
+
+            for level in &dyn_index.levels {
+                for range in level.ranges.iter() {
+                    let elem_sum: f64 = range.elements.iter().map(|e| e.weight).sum();
+                    assert_float_relative_eq!(range.weight, elem_sum, 1e-6);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn consistent_element_weights() {
+        let mut rng = pcg_rand::Pcg64::seed_from_u64(0x12345);
+
+        for n in 2..100 {
+            let dyn_index = get_used_index(&mut rng, n);
+
+            assert!(dyn_index
+                .levels
+                .iter()
+                .flat_map(|l| l.ranges.iter())
+                .all(|range| range
+                    .elements
+                    .iter()
+                    .all(|e| e.weight < range.max_element_weight)));
+
+            assert!(dyn_index
+                .levels
+                .iter()
+                .flat_map(|l| l.ranges.iter())
+                .all(|range| range
+                    .elements
+                    .iter()
+                    .all(|e| e.weight >= range.max_element_weight / 2.0)));
         }
     }
 
@@ -552,32 +587,30 @@ mod test {
 
     #[test]
     fn sample_multiple() {
-        const SAMPLES_PER_ELEMENT: usize = 10000;
+        const SAMPLES_PER_ELEMENT: usize = 25000;
         let mut rng = pcg_rand::Pcg64::seed_from_u64(0x123456);
 
-        for n in [2, 5, 20] {
+        for n in 2..15 {
             let mut dyn_index = DynamicWeightedIndex::new(n);
             let mut weights = vec![0.0; n];
 
-            for _round in 0..10 {
-                for _j in 0..n {
-                    let index = rng.gen_range(0..n);
-                    let new_weight = if rng.gen() { rng.gen() } else { 0.0 }; // 50% to be empty
-                    dyn_index.set_weight(index, new_weight);
-                    weights[index] = new_weight;
-                }
-
-                if weights.iter().copied().sum::<f64>() == 0.0 {
-                    continue;
-                }
-
-                let mut counts = vec![0; n];
-                for _j in 0..SAMPLES_PER_ELEMENT * n {
-                    counts[dyn_index.sample(&mut rng).unwrap()] += 1;
-                }
-
-                verify_multinomial(&weights, &counts, 0.05);
+            for _j in 0..n {
+                let index = rng.gen_range(0..n);
+                let new_weight = if rng.gen() { rng.gen() } else { 0.0 }; // 50% to be empty
+                dyn_index.set_weight(index, new_weight);
+                weights[index] = new_weight;
             }
+
+            if weights.iter().copied().sum::<f64>() == 0.0 {
+                continue;
+            }
+
+            let mut counts = vec![0; n];
+            for _j in 0..SAMPLES_PER_ELEMENT * n {
+                counts[dyn_index.sample(&mut rng).unwrap()] += 1;
+            }
+
+            verify_multinomial(&weights, &counts, 0.01);
         }
     }
 
@@ -600,7 +633,7 @@ mod test {
 
                 let distr = Binomial::new(probabilty, num_total_counts).unwrap();
 
-                // compute two-sided p-value, i.e. the probabilty that more extreme values are
+                // compute two-sided p-value, i.e. the probability that more extreme values are
                 // produced by the binomial distribution
                 let pvalue = if mean >= count as f64 {
                     2.0 * distr.cdf(count)
@@ -610,11 +643,13 @@ mod test {
 
                 assert!(
                     pvalue >= corrected_significance,
-                    "prob: {} mean: {} count: {} p-value: {}",
+                    "prob: {} mean: {} count: {} p-value: {} corrected-significance: {} n: {}",
                     probabilty,
                     mean,
                     count,
-                    pvalue
+                    pvalue,
+                    corrected_significance,
+                    weights.len()
                 );
             }
         }

@@ -6,7 +6,7 @@ authors = ["Manuel Penschuck <dynamic-weighted-index@algorithm.engineering>"]
 
 [dependencies]
 rand = "0.8.5"
-ez-bitset = "0.1.0"
+smallvec = "1.9.0"
 
 [dev-dependencies]
 pcg_rand = "0.13.0"
