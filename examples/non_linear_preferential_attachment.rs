@@ -63,6 +63,11 @@ fn execute_preferential_attachment(opt: Opt, rng: &mut impl Rng) {
     let mut degrees = vec![0usize; total_nodes];
     let mut dyn_index = DynamicWeightedIndex::new(total_nodes);
 
+    let cached_weights = (0..100)
+        .into_iter()
+        .map(|d| opt.offset + (d as f64).powf(opt.exponent))
+        .collect_vec();
+
     // we use a macro to update the degree to "trick" the borrow checker
     macro_rules! set_degree {
         ($node:expr, $degree:expr) => {{
@@ -70,7 +75,14 @@ fn execute_preferential_attachment(opt: Opt, rng: &mut impl Rng) {
             let d = $degree;
 
             degrees[u] = d;
-            dyn_index.set_weight(u, opt.offset + (d as f64).powf(opt.exponent));
+
+            let weight = if cached_weights.len() > d {
+                cached_weights[d as usize]
+            } else {
+                opt.offset + (d as f64).powf(opt.exponent)
+            };
+
+            dyn_index.set_weight(u, weight);
         }};
     }
 
@@ -80,21 +92,19 @@ fn execute_preferential_attachment(opt: Opt, rng: &mut impl Rng) {
     }
 
     // run preferential attachment
+    let mut hosts = vec![opt.initial_degree];
+
     for u in opt.initial_nodes.unwrap()..total_nodes {
         // sample neighbors
-        let hosts = (0..opt.initial_degree)
-            .into_iter()
-            .map(|_| {
-                let host = dyn_index.sample(rng).unwrap();
-                if opt.simple_graph {
-                    dyn_index.set_weight(host, 0.0);
-                }
-                host
-            })
-            .collect_vec();
+        for h in &mut hosts {
+            *h = dyn_index.sample(rng).unwrap();
+            if opt.simple_graph && opt.initial_degree > 1 {
+                dyn_index.set_weight(*h, 0.0);
+            };
+        }
 
         // update neighbors
-        for h in hosts {
+        for &h in &hosts {
             set_degree!(h, degrees[h] + 1);
         }
 
