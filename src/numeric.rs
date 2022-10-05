@@ -35,17 +35,17 @@ macro_rules! fpp_impl {
 }
 
 impl FloatingPointParts for f32 {
-    type BitsType = u32;
     const BITS_MANTISSA: usize = 23;
     const BITS_EXPONENT: usize = 8;
+    type BitsType = u32;
 
     fpp_impl!();
 }
 
 impl FloatingPointParts for f64 {
-    type BitsType = u64;
     const BITS_MANTISSA: usize = 52;
     const BITS_EXPONENT: usize = 11;
+    type BitsType = u64;
 
     fpp_impl!();
 }
