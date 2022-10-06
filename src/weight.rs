@@ -1,9 +1,11 @@
 use crate::numeric::FloatingPointParts;
 use rand::Rng;
-use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
+use std::fmt::Debug;
+use std::ops::{Add, AddAssign, Sub, SubAssign};
 
 pub trait Weight:
     Copy
+    + Debug
     + Sized
     + SubAssign
     + PartialEq
@@ -12,7 +14,6 @@ pub trait Weight:
     + Add<Output = Self>
     + Sub<Output = Self>
     + AddAssign
-    + Neg<Output = Self>
     + rand::distributions::uniform::SampleUniform
 {
     const NUM_RANGES: u32;
@@ -23,18 +24,20 @@ pub trait Weight:
     fn sample_from_ratio<R: Rng + ?Sized>(rng: &mut R, numerator: Self, denominator: Self) -> bool;
 }
 
-macro_rules! weight_impl_signed_int {
+macro_rules! weight_impl_int {
     ($t : ty, $test_name : ident) => {
         impl Weight for $t {
-            const NUM_RANGES: u32 = <$t>::BITS - 1;
+            const NUM_RANGES: u32 = <$t>::BITS;
             const ZERO: Self = 0;
 
             fn compute_range_index(&self) -> u32 {
-                Self::NUM_RANGES - self.leading_zeros()
+                debug_assert!(*self > 0);
+                Self::NUM_RANGES - 1 - self.leading_zeros()
             }
 
             fn max_weight_of_range_index(index: u32) -> Self {
-                1 << index
+                debug_assert!(index < Self::NUM_RANGES);
+                ((2 as $t) << index).overflowing_sub(1).0
             }
 
             fn sample_from_ratio<R: Rng + ?Sized>(
@@ -42,6 +45,7 @@ macro_rules! weight_impl_signed_int {
                 numerator: Self,
                 denominator: Self,
             ) -> bool {
+                debug_assert!(numerator <= denominator);
                 rng.gen_range(0..denominator) < numerator
             }
         }
@@ -57,7 +61,8 @@ macro_rules! weight_impl_signed_int {
                 let mut rng = Pcg64::seed_from_u64(0x1234);
                 for _ in 0..1000 {
                     let num: $t = rng.gen();
-                    if num <= 0 {
+
+                    if num == 0 {
                         continue;
                     }
 
@@ -67,7 +72,7 @@ macro_rules! weight_impl_signed_int {
                         assert_eq!(range.saturating_sub(1), (num / 2).compute_range_index());
                     }
 
-                    if range + 1 != <$t>::NUM_RANGES {
+                    if num <= <$t>::MAX / 2 {
                         assert_eq!(range + 1, (num * 2).compute_range_index());
                     }
                 }
@@ -97,12 +102,12 @@ macro_rules! weight_impl_signed_int {
     };
 }
 
-weight_impl_signed_int!(i8, test_i8);
-weight_impl_signed_int!(i16, test_i16);
-weight_impl_signed_int!(i32, test_i32);
-weight_impl_signed_int!(i64, test_i64);
-weight_impl_signed_int!(i128, test_i128);
-weight_impl_signed_int!(isize, test_isize);
+weight_impl_int!(u8, test_u8);
+weight_impl_int!(u16, test_u16);
+weight_impl_int!(u32, test_u32);
+weight_impl_int!(u64, test_u64);
+weight_impl_int!(u128, test_u128);
+weight_impl_int!(usize, test_usize);
 
 macro_rules! weight_impl_float {
     ($t : ty, $m : ty, $test_name : ident) => {
