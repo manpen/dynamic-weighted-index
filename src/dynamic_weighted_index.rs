@@ -11,6 +11,16 @@ pub struct DynamicWeightedIndex<W: Weight> {
 
 impl<W: Weight> DynamicWeightedIndex<W> {
     /// Constructs a [`DynamicWeightedIndex`] on `n` elements; initially all elements have weight 0.
+    ///
+    /// # Example
+    /// ```should_panic
+    /// use dynamic_weighted_index::DynamicWeightedIndex;
+    /// let mut dyn_idx = DynamicWeightedIndex::new(2);
+    ///
+    /// dyn_idx.set_weight(1, 123); // okay
+    /// dyn_idx.set_weight(0, 314); // okay
+    /// dyn_idx.set_weight(2, 123); // panic: out-of-bounds
+    /// ```
     pub fn new(n: usize) -> Self {
         Self {
             indices: vec![None; n],
@@ -20,6 +30,19 @@ impl<W: Weight> DynamicWeightedIndex<W> {
     }
 
     /// Updates the weight of the `idx`-th element
+    ///
+    /// # Example
+    /// ```
+    /// use dynamic_weighted_index::DynamicWeightedIndex;
+    /// let mut dyn_idx = DynamicWeightedIndex::new(2);
+    ///
+    /// assert_eq!(dyn_idx.weight(0), 0);
+    /// assert_eq!(dyn_idx.weight(1), 0);
+    ///
+    /// dyn_idx.set_weight(1, 31);
+    /// assert_eq!(dyn_idx.weight(0), 0);
+    /// assert_eq!(dyn_idx.weight(1), 31);
+    /// ```
     pub fn set_weight(&mut self, index: usize, weight: W) {
         if weight == W::ZERO {
             return self.remove_weight(index);
@@ -44,6 +67,18 @@ impl<W: Weight> DynamicWeightedIndex<W> {
     }
 
     /// Functionally equivalent to `self.set_weight(idx, W::ZERO)`
+    ///
+    /// # Example
+    /// ```
+    /// use dynamic_weighted_index::DynamicWeightedIndex;
+    /// let mut dyn_idx = DynamicWeightedIndex::new(2);
+    ///
+    /// dyn_idx.set_weight(1, 31);
+    /// assert_eq!(dyn_idx.weight(1), 31);
+    ///
+    /// dyn_idx.remove_weight(1);
+    /// assert_eq!(dyn_idx.weight(1), 0);
+    /// ```
     pub fn remove_weight(&mut self, index: usize) {
         if let Some(range_index) = self.indices[index] {
             self.total_weight -= self.weight(index);
@@ -53,7 +88,20 @@ impl<W: Weight> DynamicWeightedIndex<W> {
         }
     }
 
-    /// Returns the weight of the `index`-th element (`None` if the element is uninitialized)
+    /// Returns the weight of the `index`-th element (Zero if the element is uninitialized)
+    ///
+    /// # Example
+    /// ```
+    /// use dynamic_weighted_index::DynamicWeightedIndex;
+    /// let mut dyn_idx = DynamicWeightedIndex::new(2);
+    ///
+    /// assert_eq!(dyn_idx.weight(0), 0);
+    /// assert_eq!(dyn_idx.weight(1), 0);
+    ///
+    /// dyn_idx.set_weight(1, 31);
+    /// assert_eq!(dyn_idx.weight(0), 0);
+    /// assert_eq!(dyn_idx.weight(1), 31);
+    /// ```
     pub fn weight(&self, idx: usize) -> W {
         self.indices[idx].map_or(W::ZERO, |idx| {
             self.get_range(0, idx.range_index).elements[idx.index_in_range].weight
@@ -63,12 +111,51 @@ impl<W: Weight> DynamicWeightedIndex<W> {
     /// Returns the non-negative sum `S` of all weights assigned to this data structure. This value
     /// can be interpreted as the normalization constant for sampling; i.e. an entry with weight `w`
     /// is sampled with probability `w/S`. If no weights are assigned, the total weight is `W::ZERO`.
+    ///
+    /// # Example
+    /// ```
+    /// use dynamic_weighted_index::DynamicWeightedIndex;
+    /// let mut dyn_idx = DynamicWeightedIndex::new(2);
+    ///
+    /// // index is empty, so return 0
+    /// assert_eq!(dyn_idx.total_weight(), 0);
+    ///
+    /// // set exactly one element to a positive weight
+    /// dyn_idx.set_weight(1, 31);
+    /// assert_eq!(dyn_idx.total_weight(), 31);
+    ///
+    /// // set another element
+    /// dyn_idx.set_weight(0, 3);
+    /// assert_eq!(dyn_idx.total_weight(), 34);
+    /// ```
     pub fn total_weight(&self) -> W {
         self.total_weight
     }
 
-    /// Samples an element and returns it including its weight. Returns None iff the data structure
-    /// is empty.
+    /// Samples an element and returns it including its weight. Returns `None` iff the data
+    /// structure is empty.
+    ///
+    /// # Example
+    /// ```
+    /// use dynamic_weighted_index::DynamicWeightedIndex;
+    /// use rand;
+    ///
+    /// let mut rng = rand::thread_rng();
+    /// let mut dyn_idx = DynamicWeightedIndex::new(2);
+    ///
+    /// // index is empty, so return None
+    /// assert!(dyn_idx.sample_index_and_weight(&mut rng).is_none());
+    ///
+    /// // set exactly one element to a positive weight
+    /// dyn_idx.set_weight(1, 3.14159);
+    /// assert_eq!(dyn_idx.sample_index_and_weight(&mut rng).unwrap().index, 1);
+    /// assert_eq!(dyn_idx.sample_index_and_weight(&mut rng).unwrap().weight, 3.14159);
+    ///
+    /// // set another element with a MUCH larger weight; this test will fail in 1 out of N attempts
+    /// // where N is larger than the number of atoms in the universe.
+    /// dyn_idx.set_weight(0, 3.14159e100);
+    /// assert_eq!(dyn_idx.sample_index_and_weight(&mut rng).unwrap().index, 0);
+    /// ```
     pub fn sample_index_and_weight<R: Rng + ?Sized>(
         &self,
         rng: &mut R,
@@ -142,7 +229,7 @@ impl<W: Weight> Default for Level<W> {
     }
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, PartialEq)]
 pub struct IndexAndWeight<W: Weight> {
     pub weight: W,
     pub index: usize,
