@@ -3,17 +3,19 @@ name = "dynamic-weighted-index"
 version = "0.1.0"
 edition = "2021"
 authors = ["Manuel Penschuck <dynamic-weighted-index@algorithm.engineering>"]
+license = "MIT"
+repository = "https://github.com/manpen/dynamic-weighted-index/"
+keywords = ["random", "rng"]
+description = "Data structure to sample elements with weights that can be efficiently updated"
+categories = ["algorithms", "mathematics", "science", "simulation"]
 
 [dependencies]
-rand = "0.8.5"
-smallvec = "1.9.0"
+rand = "0.8"
+smallvec = "1.10"
 
 [dev-dependencies]
-pcg_rand = "0.13.0"
-assert_float_eq = "1.1.3"
-statrs = "0.15"
+pcg_rand = "0.13"
+assert_float_eq = "1.1"
+statrs = "0.16"
 structopt = "0.3"
 itertools = "0.10"
-
-[profile.release]
-debug = true
