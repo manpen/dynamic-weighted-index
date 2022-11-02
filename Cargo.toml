@@ -8,6 +8,7 @@ repository = "https://github.com/manpen/dynamic-weighted-index/"
 keywords = ["random", "rng"]
 description = "Data structure to sample elements with weights that can be efficiently updated"
 categories = ["algorithms", "mathematics", "science", "simulation"]
+exclude = [".github", ".gitignore"]
 
 [dependencies]
 rand = "0.8"
