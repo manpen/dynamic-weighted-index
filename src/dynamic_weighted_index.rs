@@ -3,6 +3,14 @@ use super::Weight;
 use rand::prelude::{Distribution, SliceRandom};
 use rand::Rng;
 
+/// A data structure to sample randomly samples values `i` from the interval `0..n` where the value
+/// `i` is sampled with probability proportional to weight `w_i`. Both sampling and updates are efficiently
+/// implemented in effectively constant time.
+///
+/// The data structure is generic for the weight type `W` -- it just need to implement the [`Weight`] trait,
+/// which is available for unsigned integers (`u16`, `u32`, `u64`, `u128`) and floats (`f32`, `f64`).
+/// If possible, prefer integers. Also the type needs to be chosen in a way, that the sum of all weights
+/// does not overflow the type limits.
 pub struct DynamicWeightedIndex<W: Weight> {
     indices: Vec<Option<RangeIndex>>,
     levels: Vec<Level<W>>,
@@ -17,7 +25,7 @@ impl<W: Weight> DynamicWeightedIndex<W> {
     /// use dynamic_weighted_index::DynamicWeightedIndex;
     /// let mut dyn_idx = DynamicWeightedIndex::new(2);
     ///
-    /// dyn_idx.set_weight(1, 123); // okay
+    /// dyn_idx.set_weight(1, 123u32); // okay
     /// dyn_idx.set_weight(0, 314); // okay
     /// dyn_idx.set_weight(2, 123); // panic: out-of-bounds
     /// ```
@@ -39,7 +47,7 @@ impl<W: Weight> DynamicWeightedIndex<W> {
     /// assert_eq!(dyn_idx.weight(0), 0);
     /// assert_eq!(dyn_idx.weight(1), 0);
     ///
-    /// dyn_idx.set_weight(1, 31);
+    /// dyn_idx.set_weight(1, 31u32);
     /// assert_eq!(dyn_idx.weight(0), 0);
     /// assert_eq!(dyn_idx.weight(1), 31);
     /// ```
@@ -73,7 +81,7 @@ impl<W: Weight> DynamicWeightedIndex<W> {
     /// use dynamic_weighted_index::DynamicWeightedIndex;
     /// let mut dyn_idx = DynamicWeightedIndex::new(2);
     ///
-    /// dyn_idx.set_weight(1, 31);
+    /// dyn_idx.set_weight(1, 31u32);
     /// assert_eq!(dyn_idx.weight(1), 31);
     ///
     /// dyn_idx.remove_weight(1);
@@ -98,7 +106,7 @@ impl<W: Weight> DynamicWeightedIndex<W> {
     /// assert_eq!(dyn_idx.weight(0), 0);
     /// assert_eq!(dyn_idx.weight(1), 0);
     ///
-    /// dyn_idx.set_weight(1, 31);
+    /// dyn_idx.set_weight(1, 31u32);
     /// assert_eq!(dyn_idx.weight(0), 0);
     /// assert_eq!(dyn_idx.weight(1), 31);
     /// ```
@@ -121,7 +129,7 @@ impl<W: Weight> DynamicWeightedIndex<W> {
     /// assert_eq!(dyn_idx.total_weight(), 0);
     ///
     /// // set exactly one element to a positive weight
-    /// dyn_idx.set_weight(1, 31);
+    /// dyn_idx.set_weight(1, 31u32);
     /// assert_eq!(dyn_idx.total_weight(), 31);
     ///
     /// // set another element
@@ -205,7 +213,7 @@ impl<W: Weight> Level<W> {
         linear_sampling_from_iterator(
             rng,
             self.roots_weight,
-            self.roots.iter_rev().map(|&i| {
+            self.roots.iter_rev().map(|&i: &u32| {
                 let range = &self.ranges[i as usize];
                 (range, range.weight)
             }),
@@ -643,7 +651,7 @@ mod test {
                 let dyn_index = get_used_index(&mut rng, n);
 
                 for level in dyn_index.levels.iter() {
-                    for (range_id, range) in level.ranges.iter().enumerate() {
+                    for (_range_id, range) in level.ranges.iter().enumerate() {
                         for e in range.elements.iter() {
                             assert!(e.weight <= range.max_element_weight);
                             assert!(e.weight >= range.max_element_weight / 2.0);
@@ -780,7 +788,8 @@ mod test {
                         let elem_sum = range.elements.iter().map(|e| e.weight).sum();
                         assert_eq!(range.weight, elem_sum);
                     }
-                }            }
+                }
+            }
         }
 
         #[test]
